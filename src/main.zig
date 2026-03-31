@@ -1,4 +1,7 @@
+const root = @import("root");
+const builtin = @import("builtin");
 const vga = @import("drivers/vga.zig");
+const serial = @import("drivers/serial.zig");
 
 const MB_HEADER_MAGIC = 0x1BADB002;
 const MB_FLAG_ALIGN = 1 << 0;
@@ -29,7 +32,7 @@ export fn _start() callconv(.naked) noreturn {
     asm volatile (
         \\ movl %[stack_top], %%esp
         \\ movl %%esp, %%ebp
-        \\ call %[kmain:P]
+        \\ call %[main:P]
         :
         // The stack grows downwards on x86, so we need to point ESP register
         // to one element past the end of `stack_bytes`.
@@ -42,7 +45,10 @@ export fn _start() callconv(.naked) noreturn {
         // to hold special values (e.g. EAX).
         : [stack_top] "i" (stack_bytes[stack_bytes.len..].ptr),
           // We let the compiler handle the reference to kmain by passing it as an input operand as well.
-          [kmain] "X" (&kmain),
+          [main] "X" (comptime switch (builtin.is_test) {
+            false => &kmain,
+            true => &tmain,
+          }),
     );
 }
 
@@ -50,10 +56,33 @@ export fn _start() callconv(.naked) noreturn {
 noinline fn kmain() callconv(.c) noreturn {
     // Initialize our VGA driver
     vga.init();
+    serial.init();
+
     // Printing string
     vga.print("Hello {s} kernel!\n", .{"zig"});
+    serial.print("Hello {s} kernel!\n", .{"zig"});
     // Loop forever as there is nothing to do
     while (true) {
         asm volatile ("hlt");
     }
+}
+
+/// Test runner
+pub fn tmain() callconv(.c) noreturn {
+    // Initialize our VGA driver
+    vga.init();
+    serial.init();
+
+    // Run tests
+    serial.print("Running tests {d}...\n", .{builtin.test_functions.len});
+    for (builtin.test_functions) |t| {
+        t.func() catch |err| {
+            serial.print("{s} fail: {}\n", .{ t.name, err });
+            continue;
+        };
+        serial.print("{s} passed\n", .{t.name});
+    }
+
+    // Exit
+    root.exit_qemu();
 }

@@ -9,7 +9,6 @@ const VGA_HEIGHT = 25;
 const VGA_SIZE = VGA_WIDTH * VGA_HEIGHT;
 const DEFAULT_COLOR = Color.init(.light_gray, .black);
 
-var g_row: usize = 0;
 var g_column: usize = 0;
 var g_color: Color = DEFAULT_COLOR;
 var g_buffer = @as([*]volatile u16, @ptrFromInt(0xB8000));
@@ -59,7 +58,8 @@ pub fn setColor(fg: ColorType, bg: ColorType) void {
 
 /// Clear the screen.
 pub fn clear() void {
-    @memset(g_buffer[0..VGA_SIZE], Color.getVgaChar(g_color, ' '));
+    @memset(g_buffer[0..VGA_SIZE], Color.getVgaChar(DEFAULT_COLOR, ' '));
+    g_column = 0;
 }
 
 /// Print character with color at specific position.
@@ -148,4 +148,78 @@ pub fn printString(str: []const u8) void {
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var w = writer(&.{});
     w.print(fmt, args) catch return;
+}
+
+test "printString" {
+    const str = "Testing string";
+    var expected: [str.len]u16 = undefined;
+    intoVgaChars(str, &expected);
+
+    clear();
+    printString(str);
+
+    try expectLine(&expected);
+}
+
+test "print" {
+    const str = "I am a formatted string !!11!!";
+    var expected: [str.len]u16 = undefined;
+    intoVgaChars(str, &expected);
+
+    clear();
+    print("I am a formatted string !!{d}!!", .{11});
+
+    try expectLine(&expected);
+}
+
+test "new-line" {
+    const str = "Oh boy, a new line!";
+    var expected: [str.len]u16 = undefined;
+    intoVgaChars(str, &expected);
+
+    clear();
+    printString(str ++ "\n");
+
+    try std.testing.expect(g_column == 0);
+    try expectLineAt(&expected, VGA_SIZE - 2 * VGA_WIDTH);
+}
+
+test "setColor+clear" {
+    const color = Color.init(ColorType.green, ColorType.blue);
+    var expected: [20]u16 = undefined;
+    for (0..20) |i| {
+        expected[i] = color.getVgaChar('a' + @as(u8, @intCast(i)));
+    }
+
+    clear();
+    setColor(ColorType.green, ColorType.blue);
+    try std.testing.expect(g_color == color);
+
+    for (0..20) |i| {
+        printChar('a' + @as(u8, @intCast(i)));
+    }
+    try expectLine(&expected);
+
+    clear();
+    for (0..VGA_SIZE) |i| {
+        try std.testing.expect(g_buffer[i] == DEFAULT_COLOR.getVgaChar(' '));
+    }
+}
+
+fn intoVgaChars(in: []const u8, out: []u16) void {
+    for (in, 0..) |c, i| {
+        out[i] = Color.getVgaChar(DEFAULT_COLOR, c);
+    }
+}
+
+fn expectLine(expected: []const u16) !void {
+    try expectLineAt(expected, VGA_SIZE - VGA_WIDTH);
+}
+
+fn expectLineAt(expected: []const u16, start: usize) !void {
+    for (expected, g_buffer[start..]) |exp, act| {
+        std.testing.expect(exp == act) catch {
+            return error.TestExpectedEqual;
+        };
+    }
 }
